@@ -1,6 +1,7 @@
 import os
+import time
 import requests
-import cloudscraper
+from playwright.sync_api import sync_playwright
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -18,82 +19,74 @@ def send_telegram_message(message):
     }
     
     try:
-        response = requests.post(url, json=payload)
-        if response.status_code == 200:
-            print("Telegram message sent successfully!")
-        else:
-            print(f"Failed to send Telegram message: {response.text}")
+        requests.post(url, json=payload, timeout=10)
+        print("Telegram message sent successfully!")
     except Exception as e:
         print(f"Error sending telegram message: {e}")
 
 def scrape_bse():
-    print("Initializing BSE scraper with session cookies...")
-    
-    # Create a cloudscraper session to maintain cookies & bypass WAF
-    scraper = cloudscraper.create_scraper()
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/javascript, */*; q=0.01",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://www.bseindia.com/corporates/ann.aspx",
-        "X-Requested-With": "XMLHttpRequest"
-    }
-    
-    try:
-        # Step 1: Hit the main page first to establish valid cookies and bypass Cloudflare/WAF
-        print("Visiting main page to establish session...")
-        main_page = scraper.get("https://www.bseindia.com/corporates/ann.aspx", timeout=30)
-        print(f"Main page status: {main_page.status_code}")
-        
-        # Step 2: Now call the official JSON API using the exact same session object
-        api_url = "https://api.bseindia.com/BseIndiaAPI/api/Ann_new/w?strType=C&pageno=1&strScrip=&strCat=-1&strPrevDate=&strToDate=&strFromDate=&strSearch=P"
-        
-        print("Fetching data from BSE API...")
-        response = scraper.get(api_url, headers=headers, timeout=30)
-        print(f"API Response Status Code: {response.status_code}")
-        
-        if response.status_code == 200:
-            try:
-                data = response.json()
-            except Exception as json_err:
-                snippet = response.text[:150].replace('\n', ' ')
-                print(f"Failed to parse JSON. Response starts with: {snippet}")
-                send_telegram_message(f"⚠️ BSE returned HTML instead of JSON. Snippet: `{snippet}`")
-                return
+    print("Starting BSE scraper with Network Interception...")
+    captured_data = []
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        )
+        page = context.new_page()
+
+        # Listen to network responses to catch the BSE API JSON directly as it loads
+        def handle_response(response):
+            if "Ann_new" in response.url or "AnnSubCategoryGetData" in response.url:
+                try:
+                    json_data = response.json()
+                    if json_data:
+                        captured_data.append(json_data)
+                except:
+                    pass
+
+        page.on("response", handle_response)
+
+        try:
+            print("Navigating to BSE Announcements page...")
+            page.goto("https://www.bseindia.com/corporates/ann.aspx", timeout=60000)
             
-            announcements = []
-            if isinstance(data, list):
-                announcements = data
-            elif isinstance(data, dict):
-                for k, v in data.items():
-                    if isinstance(v, list) and len(v) > 0:
-                        announcements = v
-                        break
+            # Give browser enough time to execute JS and fetch the API data
+            print("Waiting for data to load...")
+            time.sleep(8)
             
-            print(f"Total announcements found: {len(announcements)}")
-            
-            if announcements:
-                message_text = "📢 *BSE Live Filings Update*\n\n"
+        except Exception as e:
+            print(f"Navigation error: {e}")
+        finally:
+            browser.close()
+
+    # Process the captured API data
+    if captured_data:
+        data = captured_data[0]
+        announcements = []
+        if isinstance(data, list):
+            announcements = data
+        elif isinstance(data, dict):
+            for k, v in data.items():
+                if isinstance(v, list) and len(v) > 0:
+                    announcements = v
+                    break
+        
+        if announcements:
+            message_text = "📢 *BSE Live Filings Update*\n\n"
+            for i, item in enumerate(announcements[:5], start=1):
+                company = item.get("SLONGNAME") or item.get("CompanyName") or item.get("scripname") or "Company"
+                headline = item.get("HEADLINE") or item.get("NewsHeadline") or item.get("heading") or "Headline"
+                date_time = item.get("DT_TM") or item.get("NewsDt") or ""
                 
-                for i, item in enumerate(announcements[:5], start=1):
-                    company = item.get("SLONGNAME") or item.get("CompanyName") or item.get("scripname") or "Company"
-                    headline = item.get("HEADLINE") or item.get("NewsHeadline") or item.get("heading") or "Headline"
-                    date_time = item.get("DT_TM") or item.get("NewsDt") or ""
-                    
-                    message_text += f"{i}. **{company}**\n📝 {headline}\n🕒 `{date_time}`\n\n"
-                
-                send_telegram_message(message_text)
-                print("Sent filings to Telegram successfully!")
-            else:
-                send_telegram_message("🤖 API connected successfully, but announcement list was empty.")
+                message_text += f"{i}. **{company}**\n📝 {headline}\n🕒 `{date_time}`\n\n"
+            
+            send_telegram_message(message_text)
+            print("Sent announcements to Telegram!")
         else:
-            send_telegram_message(f"⚠️ BSE API blocked request with status: {response.status_code}")
-            
-    except Exception as e:
-        error_msg = str(e)
-        print(f"Error during execution: {error_msg}")
-        send_telegram_message(f"⚠️ *BSE Bot Error*\n\nError: {error_msg}")
+            send_telegram_message("🤖 Browser caught API response, but the announcements list was empty.")
+    else:
+        send_telegram_message("⚠️ Playwright could not intercept the API response. Security challenge active.")
 
 if __name__ == "__main__":
     scrape_bse()
