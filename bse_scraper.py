@@ -25,17 +25,33 @@ def send_telegram_message(message):
         print(f"Error sending telegram message: {e}")
 
 def scrape_bse():
-    print("Starting BSE scraper with Network Interception...")
+    print("Starting Stealth BSE scraper...")
     captured_data = []
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        # Launch browser with anti-detection flags to bypass security walls
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-infobars",
+                "--disable-dev-shm-usage",
+                "--start-maximized"
+            ]
         )
+        
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            viewport={"width": 1920, "height": 1080}
+        )
+        
         page = context.new_page()
 
-        # Listen to network responses to catch the BSE API JSON directly as it loads
+        # Mask automation properties so BSE thinks it's a real human browser
+        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+
+        # Listen to network responses to catch the BSE API JSON naturally
         def handle_response(response):
             if "Ann_new" in response.url or "AnnSubCategoryGetData" in response.url:
                 try:
@@ -48,11 +64,17 @@ def scrape_bse():
         page.on("response", handle_response)
 
         try:
-            print("Navigating to BSE Announcements page...")
+            # Step 1: Visit BSE Home first to pass any security/cookie challenges cleanly
+            print("Visiting BSE Home page...")
+            page.goto("https://www.bseindia.com/", timeout=60000)
+            time.sleep(5)
+            
+            # Step 2: Now navigate to the corporate announcements page
+            print("Navigating to Announcements page...")
             page.goto("https://www.bseindia.com/corporates/ann.aspx", timeout=60000)
             
-            # Give browser enough time to execute JS and fetch the API data
-            print("Waiting for data to load...")
+            # Give enough time for the page to load and trigger background API requests
+            print("Waiting for live data to load...")
             time.sleep(8)
             
         except Exception as e:
@@ -82,11 +104,11 @@ def scrape_bse():
                 message_text += f"{i}. **{company}**\n📝 {headline}\n🕒 `{date_time}`\n\n"
             
             send_telegram_message(message_text)
-            print("Sent announcements to Telegram!")
+            print("Sent announcements to Telegram successfully!")
         else:
-            send_telegram_message("🤖 Browser caught API response, but the announcements list was empty.")
+            send_telegram_message("🤖 Browser caught API response, but announcements list was empty.")
     else:
-        send_telegram_message("⚠️ Playwright could not intercept the API response. Security challenge active.")
+        send_telegram_message("⚠️ Security challenge active. WAF blocked the stealth run.")
 
 if __name__ == "__main__":
     scrape_bse()
