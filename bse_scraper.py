@@ -26,11 +26,20 @@ def send_telegram_message(message):
         print(f"Error sending telegram message: {e}")
 
 def fetch_bse_announcements():
-    # Session use karna zaroori hai taaki cookies maintain rahein aur WAF block na kare
     session = requests.Session()
     
+    # Optional: Agar tere paas koi proxy hai toh yahan set kar (e.g., "http://username:password@proxyserver:port")
+    # Free GitHub Actions par bina proxy ke BSE block marega hi marega kyunki IP data center ka hai.
+    proxy_url = os.environ.get("PROXY_URL") # GitHub Secrets me proxy dal sakta hai agar ho toh
+    if proxy_url:
+        session.proxies = {
+            "http": proxy_url,
+            "https": proxy_url
+        }
+        print("Using custom proxy for requests...")
+
     base_headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9'
     }
@@ -45,13 +54,7 @@ def fetch_bse_announcements():
             'accept-language': 'en-US,en;q=0.9',
             'origin': 'https://www.bseindia.com',
             'referer': 'https://www.bseindia.com/corporates/ann.html',
-            'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
-            'sec-fetch-dest': 'empty',
-            'sec-fetch-mode': 'cors',
-            'sec-fetch-site': 'same-site',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
         }
         
         api_url = "https://api.bseindia.com/BseIndiaAPI/api/Ann_new/w?strType=C&pageno=1&strScrip=&strCat=-1&strPrevDate=&strToDate=&strFromDate=&strSearch=P"
@@ -79,16 +82,16 @@ def fetch_bse_announcements():
                         
                         message_text += f"{idx}. **{company}**\n📝 {subject}\n🕒 `{date_time}`\n\n"
                     
-                    # Ab yahan properly Telegram message send hoga!
                     send_telegram_message(message_text)
                 else:
                     send_telegram_message("🤖 API connected successfully, but announcements table was empty.")
             except Exception as json_err:
                 snippet = response.text[:150].replace('\n', ' ')
                 print(f"Failed to parse JSON. Snippet: {snippet}")
-                send_telegram_message(f"⚠️ BSE returned HTML instead of JSON. Snippet: `{snippet}`")
+                send_telegram_message(f"⚠️ BSE returned HTML instead of JSON (WAF Blocked). Snippet: `{snippet}`")
         else:
-            send_telegram_message(f"⚠️ BSE API blocked request with status: {response.status_code}")
+            send_send_msg = f"⚠️ BSE API blocked request with status: {response.status_code}"
+            send_telegram_message(send_send_msg)
             
     except Exception as e:
         error_msg = str(e)
