@@ -27,12 +27,13 @@ def send_telegram_message(message):
         print(f"Error sending telegram message: {e}")
 
 def scrape_bse():
-    print("Fetching BSE Announcements via official API...")
+    print("Fetching BSE Announcements via official Ann_new API...")
     
     scraper = cloudscraper.create_scraper()
     
     try:
-        api_url = "https://api.bseindia.com/BseIndiaAPI/api/AnnSubCategoryGetData/w?pageno=1&strCat=-1&strPrevDate=&strScrip=&strSearch=C&strToDate=&strFromDate=&strType=C"
+        # BSE ka ye wala API endpoint direct announcements ki list deta hai
+        api_url = "https://api.bseindia.com/BseIndiaAPI/api/Ann_new/w?strType=C&pageno=1&strScrip=&strCat=-1&strPrevDate=&strToDate=&strFromDate=&strSearch=P"
         
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -50,18 +51,11 @@ def scrape_bse():
             if isinstance(data, list):
                 announcements = data
             elif isinstance(data, dict):
-                # Har possible key ko check karte hain jisme list ho sakti hai
-                for key in ["Table", "table", "Table1", "TableData", "Announcements", "Annc"]:
-                    if key in data and isinstance(data[key], list) and len(data[key]) > 0:
-                        announcements = data[key]
+                # Check all keys to find the list of announcements
+                for k, v in data.items():
+                    if isinstance(v, list) and len(v) > 0:
+                        announcements = v
                         break
-                
-                # Agar phir bhi na mile, toh dictionary ki pehli list wali key utha lo
-                if not announcements:
-                    for k, v in data.items():
-                        if isinstance(v, list) and len(v) > 0:
-                            announcements = v
-                            break
             
             print(f"Total announcements found: {len(announcements)}")
             
@@ -69,8 +63,8 @@ def scrape_bse():
                 message_text = "📢 *BSE Live Filings Update*\n\n"
                 
                 for i, item in enumerate(announcements[:5], start=1):
-                    company = item.get("SLONGNAME") or item.get("CompanyName") or item.get("SCRIP_CD") or "Company"
-                    headline = item.get("HEADLINE") or item.get("NewsHeadline") or item.get("Heading") or "Headline"
+                    company = item.get("SLONGNAME") or item.get("CompanyName") or item.get("scripname") or "Company"
+                    headline = item.get("HEADLINE") or item.get("NewsHeadline") or item.get("heading") or "Headline"
                     date_time = item.get("DT_TM") or item.get("NewsDt") or ""
                     
                     message_text += f"{i}. **{company}**\n📝 {headline}\n🕒 `{date_time}`\n\n"
@@ -78,10 +72,7 @@ def scrape_bse():
                 send_telegram_message(message_text)
                 print("Sent filings to Telegram successfully!")
             else:
-                # Debug ke liye keys bhejenge taaki pata chale JSON mein kya hai
-                keys_found = list(data.keys()) if isinstance(data, dict) else "List format"
-                send_telegram_message(f"🤖 API connected! Keys found: `{keys_found}`")
-                print(f"Keys found: {keys_found}")
+                send_telegram_message("🤖 API connected, but announcement list was empty.")
         else:
             send_telegram_message(f"⚠️ BSE API blocked request. Status: {response.status_code}")
             
