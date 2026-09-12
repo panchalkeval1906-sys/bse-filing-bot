@@ -1,10 +1,34 @@
+import os
 import requests
+
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+def send_telegram_message(message):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("Telegram credentials missing!")
+        return
+    
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+    
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        if response.status_code == 200:
+            print("Telegram message sent successfully!")
+        else:
+            print(f"Failed to send Telegram message: {response.text}")
+    except Exception as e:
+        print(f"Error sending telegram message: {e}")
 
 def fetch_bse_announcements():
     # Session use karna zaroori hai taaki cookies maintain rahein aur WAF block na kare
     session = requests.Session()
     
-    # Step 1: Main page ko hit karke cookies/session acquire karo
     base_headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -15,7 +39,6 @@ def fetch_bse_announcements():
         print("Establishing secure session with BSE...")
         session.get("https://www.bseindia.com/corporates/ann.html", headers=base_headers, timeout=15)
         
-        # Step 2: API headers jisme proper Origin aur Referer ho
         api_headers = {
             'authority': 'api.bseindia.com',
             'accept': 'application/json, text/plain, */*',
@@ -39,26 +62,38 @@ def fetch_bse_announcements():
         if response.status_code == 200:
             try:
                 data = response.json()
-                table = data.get('Table', [])
+                table = []
+                if isinstance(data, dict):
+                    table = data.get('Table', [])
+                elif isinstance(data, list):
+                    table = data
+                    
                 if table:
-                    print(f"\nSuccessfully fetched {len(table)} announcements!\n")
+                    print(f"Successfully fetched {len(table)} announcements!")
+                    message_text = "📢 *BSE Live Filings Update*\n\n"
+                    
                     for idx, item in enumerate(table[:5], 1):
-                        company = item.get('SLONGNAME', 'N/A')
-                        subject = item.get('NEWSSUB', 'N/A')
-                        date_time = item.get('DT_TM', 'N/A')
-                        print(f"{idx}. [{date_time}] {company}")
-                        print(f"   Subject: {subject}\n")
+                        company = item.get('SLONGNAME') or item.get('CompanyName') or item.get('scripname') or 'Company'
+                        subject = item.get('NEWSSUB') or item.get('HEADLINE') or item.get('NewsHeadline') or 'Headline'
+                        date_time = item.get('DT_TM') or item.get('NewsDt') or ''
+                        
+                        message_text += f"{idx}. **{company}**\n📝 {subject}\n🕒 `{date_time}`\n\n"
+                    
+                    # Ab yahan properly Telegram message send hoga!
+                    send_telegram_message(message_text)
                 else:
-                    print("API responded successfully, but 'Table' list is empty.")
-            except json.JSONDecodeError:
-                print("Response is not valid JSON (WAF might have blocked with HTML).")
-                print(response.text[:300])
+                    send_telegram_message("🤖 API connected successfully, but announcements table was empty.")
+            except Exception as json_err:
+                snippet = response.text[:150].replace('\n', ' ')
+                print(f"Failed to parse JSON. Snippet: {snippet}")
+                send_telegram_message(f"⚠️ BSE returned HTML instead of JSON. Snippet: `{snippet}`")
         else:
-            print(f"Failed with status code: {response.status_code}")
-            print(response.text[:300])
+            send_telegram_message(f"⚠️ BSE API blocked request with status: {response.status_code}")
             
     except Exception as e:
+        error_msg = str(e)
         print(f"An error occurred: {e}")
+        send_telegram_message(f"⚠️ *BSE Bot Error*\n\nError: {error_msg}")
 
 if __name__ == "__main__":
     fetch_bse_announcements()
