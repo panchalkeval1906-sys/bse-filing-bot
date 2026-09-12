@@ -28,31 +28,36 @@ def send_telegram_message(message):
         print(f"Error sending telegram message: {e}")
 
 def scrape_bse():
-    print("Starting BSE scraper for all filings...")
+    print("Starting BSE scraper...")
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+        # Ek real browser jaisa user-agent set karte hain taaki BSE block na kare
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+        page = context.new_page()
         
         try:
             print("Navigating to BSE India Results page...")
             page.goto("https://www.bseindia.com/corporates/Comp_Results.aspx", timeout=60000)
-            page.wait_for_load_state("networkidle")
             
-            # Thoda wait karte hain taaki table load ho jaye
-            time.sleep(3)
+            # Table load hone ka wait karte hain
+            print("Waiting for table to load...")
+            page.wait_for_selector("table", timeout=15000)
+            time.sleep(5)  # Extra buffer for dynamic rows
             
-            # Table rows ko select karne ka try karte hain (BSE results table)
-            # Yahan hum saari rows utha rahe hain bina kisi filter ke
+            # Saari rows nikalte hain
             rows = page.locator("table tr").all()
+            print(f"Total rows found: {len(rows)}")
             
             filings_found = 0
-            message_text = "📢 *BSE All Filings Update*\n\n"
+            message_text = "📢 *BSE Live Filings Update*\n\n"
             
-            # Pehle kuch rows ko extract karte hain (jaise top 5-10 filings taaki spam na ho)
-            for i, row in enumerate(rows[1:10], start=1):  
+            # Top rows ko grab karte hain
+            for i, row in enumerate(rows[1:8], start=1):
                 row_text = row.inner_text().strip()
-                if row_text:
+                if row_text and len(row_text) > 10:  
                     clean_text = row_text.replace('\n', ' - ')
                     message_text += f"{i}. {clean_text}\n\n"
                     filings_found += 1
@@ -61,8 +66,8 @@ def scrape_bse():
                 send_telegram_message(message_text)
                 print(f"Sent {filings_found} filings to Telegram.")
             else:
-                send_telegram_message("🤖 BSE Bot run ho gaya hai, par abhi table mein koi row nahi mili.")
-                print("No rows found in table.")
+                send_telegram_message("🤖 BSE Bot chal gaya hai, par table rows empty hain ya structure alag hai.")
+                print("Table found but no valid rows extracted.")
                 
         except Exception as e:
             error_msg = str(e)
