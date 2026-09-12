@@ -1,76 +1,76 @@
 import os
-import cloudscraper
+import time
+import requests
+from playwright.sync_api import sync_playwright
 
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
-TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
-
-sent_ids = set()
-
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 def send_telegram_message(message):
-  url = f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage'
-  payload = {
-      'chat_id': TELEGRAM_CHAT_ID,
-      'text': message,
-      'parse_mode': 'Markdown',
-  }
-  try:
-    scraper = cloudscraper.create_scraper()
-    scraper.post(url, json=payload, timeout=10)
-  except Exception as e:
-    print(f'Error sending Telegram: {e}')
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("Telegram credentials missing!")
+        return
+    
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+    
+    try:
+        response = requests.post(url, json=payload)
+        if response.status_code == 200:
+            print("Telegram message sent successfully!")
+        else:
+            print(f"Failed to send Telegram message: {response.text}")
+    except Exception as e:
+        print(f"Error sending telegram message: {e}")
 
+def scrape_bse():
+    print("Starting BSE scraper for all filings...")
+    
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        
+        try:
+            print("Navigating to BSE India Results page...")
+            page.goto("https://www.bseindia.com/corporates/Comp_Results.aspx", timeout=60000)
+            page.wait_for_load_state("networkidle")
+            
+            # Thoda wait karte hain taaki table load ho jaye
+            time.sleep(3)
+            
+            # Table rows ko select karne ka try karte hain (BSE results table)
+            # Yahan hum saari rows utha rahe hain bina kisi filter ke
+            rows = page.locator("table tr").all()
+            
+            filings_found = 0
+            message_text = "📢 *BSE All Filings Update*\n\n"
+            
+            # Pehle kuch rows ko extract karte hain (jaise top 5-10 filings taaki spam na ho)
+            for i, row in enumerate(rows[1:10], start=1):  
+                row_text = row.inner_text().strip()
+                if row_text:
+                    clean_text = row_text.replace('\n', ' - ')
+                    message_text += f"{i}. {clean_text}\n\n"
+                    filings_found += 1
+            
+            if filings_found > 0:
+                send_telegram_message(message_text)
+                print(f"Sent {filings_found} filings to Telegram.")
+            else:
+                send_telegram_message("🤖 BSE Bot run ho gaya hai, par abhi table mein koi row nahi mili.")
+                print("No rows found in table.")
+                
+        except Exception as e:
+            error_msg = str(e)
+            print(f"Error during scraping: {error_msg}")
+            send_telegram_message(f"⚠️ *BSE Bot Error*\n\nError aaya hai: {error_msg}")
+            
+        finally:
+            browser.close()
 
-def check_bse_filings():
-  api_url = 'https://api.bseindia.com/BSEIndiaAPI/api/AnnSubCategoryGetData?strCat=-1&strPrevDate=&strScrip=&strSearch=P&strToDate=&strType=C'
-
-  headers = {
-      'Host': 'api.bseindia.com',
-      'User-Agent': (
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,'
-          ' like Gecko) Chrome/122.0.0.0 Safari/537.36'
-      ),
-      'Referer': 'https://www.bseindia.com/',
-  }
-
-  try:
-    scraper = cloudscraper.create_scraper()
-    response = scraper.get(api_url, headers=headers, timeout=15)
-
-    if response.status_code != 200:
-      print(f'BSE Blocked or Error: {response.status_code}')
-      return
-
-    data = response.json()
-    announcements = data.get('Table', [])
-
-    # First run par history cache kar lo taaki purane messages na aayein
-    global sent_ids
-    if not sent_ids:
-      for item in announcements:
-        fid = str(item.get('NEWSID') or item.get('ROW_ID'))
-        if fid:
-          sent_ids.add(fid)
-      print('Initialized successfully. Filings cached.')
-      return
-
-    for item in announcements:
-      fid = str(item.get('NEWSID') or item.get('ROW_ID'))
-      if fid and fid not in sent_ids:
-        sent_ids.add(fid)
-        heading = item.get('HEADLINE', 'No Headline')
-        scrip_name = item.get('SLONGNAME', 'Unknown Company')
-        dt = item.get('NEWS_DT', '')
-
-        msg = (
-            f'🚨 *New BSE Filing Alert!*\n\n*Company:* {scrip_name}\n*Headline:*'
-            f' {heading}\n*Time:* {dt}'
-        )
-        send_telegram_message(msg)
-
-  except Exception as e:
-    print(f'Error: {e}')
-
-
-if __name__ == '__main__':
-  check_bse_filings()
+if __name__ == "__main__":
+    scrape_bse()
