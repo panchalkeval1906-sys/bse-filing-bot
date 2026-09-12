@@ -27,12 +27,11 @@ def send_telegram_message(message):
         print(f"Error sending telegram message: {e}")
 
 def scrape_bse():
-    print("Fetching BSE Announcements via official Ann_new API...")
+    print("Fetching BSE Announcements safely...")
     
     scraper = cloudscraper.create_scraper()
     
     try:
-        # BSE ka ye wala API endpoint direct announcements ki list deta hai
         api_url = "https://api.bseindia.com/BseIndiaAPI/api/Ann_new/w?strType=C&pageno=1&strScrip=&strCat=-1&strPrevDate=&strToDate=&strFromDate=&strSearch=P"
         
         headers = {
@@ -45,13 +44,18 @@ def scrape_bse():
         print(f"API Response Status Code: {response.status_code}")
         
         if response.status_code == 200:
-            data = response.json()
+            # Check if response is actually JSON to prevent crashing
+            try:
+                data = response.json()
+            except Exception:
+                print(f"Response text (Not JSON): {response.text[:200]}")
+                send_telegram_message(f"⚠️ BSE ne JSON nahi bheja. Response text: `{response.text[:100]}`")
+                return
             
             announcements = []
             if isinstance(data, list):
                 announcements = data
             elif isinstance(data, dict):
-                # Check all keys to find the list of announcements
                 for k, v in data.items():
                     if isinstance(v, list) and len(v) > 0:
                         announcements = v
